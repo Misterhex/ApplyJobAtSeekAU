@@ -15,10 +15,9 @@ open OpenQA.Selenium.PhantomJS
 open OpenQA.Selenium.Support.UI
 open System.Net
 
-let private getPageSourceAsync searchUrl (driverFactory:IWebDriver) = 
+let private getPageSourceAsync searchUrl (driver:IWebDriver) = 
     async {
         try
-            use driver = driverFactory
             printfn "querying page %A" searchUrl
             driver.Url <- searchUrl
     
@@ -42,13 +41,13 @@ let private getPageSourceAsync searchUrl (driverFactory:IWebDriver) =
 
 
 
-let private GetJobIds numberOfPastPageToSearch driverFactory keywords=    
+let private getJobIds numberOfPastPageToSearch driver keywords=    
     let searchUrlFormat = @"http://www.seek.com.au/jobs/in-australia/#dateRange=31&workType=0&industry=&occupation=&graduateSearch=false&salaryFrom=0&salaryTo=999999&salaryType=annual&advertiserID=&advertiserGroup=&keywords={0}&page={1}&isAreaUnspecified=false&location=&area=&nation=3000&sortMode=ListedDate&searchFrom=quick&searchType="
     let regex = new Regex(@"data-jobid=""[0-9]{8}""")
     keywords 
         |> Array.map (fun keyword -> WebUtility.UrlEncode(keyword))
         |> Array.collect (fun keyword -> [|1.. numberOfPastPageToSearch|]|> Array.map(fun index -> String.Format(searchUrlFormat,keyword,index)))
-        |> Array.map (fun searchUrl -> getPageSourceAsync searchUrl driverFactory |> Async.RunSynchronously)
+        |> Array.map (fun searchUrl -> getPageSourceAsync searchUrl driver |> Async.RunSynchronously)
         |> Array.filter (fun x -> x.IsSome)
         |> Array.map (fun x-> x.Value)
         |> Array.toSeq
@@ -57,7 +56,7 @@ let private GetJobIds numberOfPastPageToSearch driverFactory keywords=
 let private applySingleJob (driver:IWebDriver) (jobId:string) email phoneNumber firstName lastName jobTitle companyname yearsOfExperience = 
     try
         driver.Url <- String.Format("https://www.seek.com.au/Apply/{0}", jobId)
-        let wait30Seconds = new WebDriverWait(driver, TimeSpan.FromSeconds(30.0))
+        let wait30Seconds = new WebDriverWait(driver, TimeSpan.FromSeconds(10.0))
         wait30Seconds.Until(fun driver -> driver.FindElement(By.Id("PhoneNumber"))) |> (fun x-> x.Clear(); x.SendKeys(phoneNumber))
         wait30Seconds.Until(fun driver -> driver.FindElement(By.Id("Email"))) |> (fun x-> x.Clear(); x.SendKeys(email))
         wait30Seconds.Until(fun driver -> driver.FindElement(By.Id("LastName"))) |> (fun x-> x.Clear();x.SendKeys(lastName))
@@ -74,17 +73,15 @@ let private applySingleJob (driver:IWebDriver) (jobId:string) email phoneNumber 
     with
         _-> false
 
-let private loginAsync username password (driverFactory:IWebDriver)= 
+let private loginAsync username password (driver:IWebDriver)= 
     async {
-        use driver = driverFactory
         driver.Url <- "http://www.seek.com.au/";
         let wait10Seconds = new WebDriverWait(driver, TimeSpan.FromSeconds(10.0))
         wait10Seconds.Until(fun driver -> driver.FindElement(By.Id("username"))) |> (fun x -> x.SendKeys(username))
         wait10Seconds.Until(fun driver -> driver.FindElement(By.Id("password"))) |> (fun x -> x.SendKeys(password))
-        wait10Seconds.Until(fun driver -> driver.FindElement(By.Id("loginButton"))) |> (fun x -> x.Click())
+        wait10Seconds.Until(fun driver -> driver.FindElement(By.Id("logInButton"))) |> (fun x -> x.Click())
 
         do! Async.Sleep(250)
-        return driver
         }
 
 let private applyJobs email password phoneNumber firstName lastName jobTitle companyname yearsOfExperience driver jobIds=
@@ -100,7 +97,7 @@ let private applyJobs email password phoneNumber firstName lastName jobTitle com
 
     applyJobsRec(jobIds)
  
-let StartApplying :unit = 
+let startApply :unit = 
     let username = System.Configuration.ConfigurationManager.AppSettings.Get("username")
     let password = System.Configuration.ConfigurationManager.AppSettings.Get("password")
     let phone = System.Configuration.ConfigurationManager.AppSettings.Get("phone")
@@ -124,7 +121,7 @@ let StartApplying :unit =
     printfn "keywords %A" keywords
     printfn "webkit %A" (System.Configuration.ConfigurationManager.AppSettings.Get("webkit"))
 
-    let driverFactory : IWebDriver = 
+    use driver : IWebDriver = 
         let webkit = System.Configuration.ConfigurationManager.AppSettings.Get("webkit")
         match webkit with
         | "firefox" -> new FirefoxDriver() :> IWebDriver
@@ -132,13 +129,16 @@ let StartApplying :unit =
 
     printfn "finding job from keywords %A" keywords
     printfn "search up to past %A page/s per keyword" numberOfPastPageToSearchPerKeyword
-    let jobIds = (GetJobIds numberOfPastPageToSearchPerKeyword driverFactory keywords)
+    let jobIds = (getJobIds numberOfPastPageToSearchPerKeyword driver keywords)
     printfn "found a total of %i unique job ids to apply" (jobIds.Count())
-    jobIds |> Seq.iter (printf "%A")
-    let loggedInWebDriver = loginAsync username password driverFactory |> Async.RunSynchronously
-    let curriedApplyJobs driver jobIds = applyJobs username password phone firstname lastname jobtitle companyname yearOfExperience loggedInWebDriver
-    curriedApplyJobs jobIds |> ignore
+    jobIds |> Seq.iter (printf " %A")
+    printfn ""
+    loginAsync username password driver |> Async.RunSynchronously
+    let curriedApplyJobs jobIds = applyJobs username password phone firstname lastname jobtitle companyname yearOfExperience driver
+    
+    jobIds |> Seq.toList |> applyJobs username password phone firstname lastname jobtitle companyname yearOfExperience driver |> ignore
     printfn "completed applying all jobs"
+    
 
 
 
