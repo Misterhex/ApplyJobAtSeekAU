@@ -14,11 +14,41 @@ open OpenQA.Selenium.Firefox
 open OpenQA.Selenium.PhantomJS
 open OpenQA.Selenium.Support.UI
 open System.Net
+open System.Collections.Generic
+open Newtonsoft.Json
+open System.IO
+
+let private path = Path.Combine(Environment.CurrentDirectory,"appliedJobIds.txt")
+
+let private getHashSet = 
+        try 
+            let json = File.ReadAllText(path)
+            Some(JsonConvert.DeserializeObject<HashSet<string>>(json))
+        with
+        | :? FileNotFoundException -> Some(new HashSet<string>())
+        | _ -> printfn "unable to get %A from disk" path; Environment.Exit(1); None
+
+let private saveHashSet (set:HashSet<string>) =
+        try
+            let json = JsonConvert.SerializeObject(set)
+            File.WriteAllText(path,json)
+        with 
+            _ -> printfn "unable to save %A from disk" path; Environment.Exit(1)
+
+let private saveJobId jobId =
+    try
+        let hashSet = getHashSet
+
+        hashSet.Value.Add(jobId) |> ignore
+        saveHashSet hashSet.Value
+        printfn "saved jobId %A" |> ignore
+    with
+        | _ -> printfn "unable to save job id %A" jobId; Environment.Exit(1)
 
 let private getPageSourceAsync searchUrl (driver:IWebDriver) = 
     async {
         try
-            printfn "querying page %A" searchUrl
+            printfn "querying seek au for jobids ..."
             driver.Url <- searchUrl
     
             let tryCloseToolTip =
@@ -68,7 +98,7 @@ let private applySingleJob (driver:IWebDriver) (jobId:string) email phoneNumber 
         wait30Seconds.Until(fun driver -> driver.FindElement(By.Id("SubmitLink"))) |> (fun x-> x.Click())
 
         match driver.PageSource with
-        | source when source.ToLower().Contains("best of luck") -> true
+        | source when source.ToLower().Contains("best of luck") -> saveJobId jobId; true
         | _-> false                  
     with
         _-> false
@@ -129,14 +159,19 @@ let startApply :unit =
 
     printfn "finding job from keywords %A" keywords
     printfn "search up to past %A page/s per keyword" numberOfPastPageToSearchPerKeyword
-    let jobIds = (getJobIds numberOfPastPageToSearchPerKeyword driver keywords)
-    printfn "found a total of %i unique job ids to apply" (jobIds.Count())
-    jobIds |> Seq.iter (printf " %A")
+    let jobIds = (getJobIds numberOfPastPageToSearchPerKeyword driver keywords) |> Seq.distinct |> Seq.toList
+    printfn "found a total of %i job ids from search" (jobIds.Length)
+
+    let optionHashSet = getHashSet 
+    if optionHashSet.IsNone then printfn "unable to read %A from disk" path; Environment.Exit(1)
+
+    let uniqueJobIds = jobIds.Except(optionHashSet.Value) |> Seq.toList
+
+    printfn "%i job ids have not been applied yet, applying now" (uniqueJobIds.Count())
+    uniqueJobIds |> Seq.iter (printf " %A")
     printfn ""
     loginAsync username password driver |> Async.RunSynchronously
-    let curriedApplyJobs jobIds = applyJobs username password phone firstname lastname jobtitle companyname yearOfExperience driver
-    
-    jobIds |> Seq.toList |> applyJobs username password phone firstname lastname jobtitle companyname yearOfExperience driver |> ignore
+    uniqueJobIds |> Seq.toList |> applyJobs username password phone firstname lastname jobtitle companyname yearOfExperience driver |> ignore
     printfn "completed applying all jobs"
     
 

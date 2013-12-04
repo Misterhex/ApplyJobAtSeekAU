@@ -6,6 +6,5 @@ open System
 
 [<EntryPoint>]
 let main argv = 
-    ApplySeekAU.startApply
-    Console.ReadLine() |> ignore
+    ApplySeekAU.startApply |> ignore
     0 // return an integer exit code
